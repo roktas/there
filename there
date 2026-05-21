@@ -31,7 +31,7 @@ image_key() {
 	local command
 
 	command=${0##*/}
-	if [[ $command == here ]]; then
+	if [[ $command == there ]]; then
 		printf '%s\n' ubuntu
 	else
 		printf '%s\n' "$command"
