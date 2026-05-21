@@ -24,3 +24,8 @@ there destroy
 there prune
 ```
 
+Run the shell test suite without starting real Lima instances.
+
+```bash
+tests/there
+```

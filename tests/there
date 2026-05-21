@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail; shopt -s nullglob; [[ -z ${TRACE:-} ]] || set -x; unset CDPATH; IFS=$' \n'
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+TEMP=$(mktemp -d)
+
+cleanup() {
+	local status=$?
+
+	rm -rf "$TEMP"
+	exit "$status"
+}
+
+trap cleanup EXIT HUP INT QUIT TERM
+
+fail() {
+	printf 'not ok - %s\n' "$*" >&2
+	exit 1
+}
+
+pass() {
+	printf 'ok - %s\n' "$*"
+}
+
+assert_contains() {
+	local haystack=$1
+	local needle=$2
+
+	[[ $haystack == *"$needle"* ]] || fail "expected output to contain: $needle"
+}
+
+make_fake_limactl() {
+	local dir=$1
+
+	mkdir -p "$dir"
+	cat >"$dir/limactl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${THERE_LIMACTL_LOG:?}"
+case ${1:-} in
+list)
+	exit 0
+;;
+shell)
+	exit 0
+;;
+*)
+	exit 0
+;;
+esac
+EOF
+	chmod +x "$dir/limactl"
+}
+
+make_fake_uname() {
+	local dir=$1
+	local kernel=$2
+
+	mkdir -p "$dir"
+	cat >"$dir/uname" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$kernel"
+EOF
+	chmod +x "$dir/uname"
+}
+
+run_there() {
+	local workdir=$1
+	shift
+
+	(
+		cd "$workdir"
+		PATH=$TEMP/bin:$PATH "$ROOT/there" "$@"
+	)
+}
+
+test_help_command() {
+	local output
+
+	output=$("$ROOT/there" help)
+	assert_contains "$output" 'there: project-local Lima VM wrapper'
+	assert_contains "$output" 'there help                show this help'
+	assert_contains "$output" 'Project root is mounted writable in the guest as /here.'
+	pass 'help command prints agent-friendly reference'
+}
+
+test_run_creates_linux_legacy_instance_with_legacy_bios() {
+	local log
+	local project
+
+	log=$TEMP/legacy.log
+	project=$TEMP/project
+	mkdir -p "$project" "$TEMP/sys-firmware"
+	: >"$log"
+	make_fake_limactl "$TEMP/bin"
+	make_fake_uname "$TEMP/bin" Linux
+
+	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware run_there "$project" run pwd
+
+	assert_contains "$(cat "$log")" '.firmware.legacyBIOS = true'
+	assert_contains "$(cat "$log")" "--set .mounts = [{\"location\": \"$project\", \"mountPoint\": \"/here\", \"writable\": true}]"
+	assert_contains "$(cat "$log")" 'shell --workdir /here ubuntu-project-'
+	pass 'run creates Linux legacy instance with legacyBIOS'
+}
+
+test_run_creates_linux_efi_instance_without_legacy_bios() {
+	local log
+	local project
+
+	log=$TEMP/efi.log
+	project=$TEMP/project-efi
+	mkdir -p "$project" "$TEMP/sys-firmware-efi/efi"
+	: >"$log"
+	make_fake_limactl "$TEMP/bin"
+	make_fake_uname "$TEMP/bin" Linux
+
+	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware-efi run_there "$project" run pwd
+
+	if [[ $(cat "$log") == *'.firmware.legacyBIOS = true'* ]]; then
+		fail 'Linux EFI instance should not use legacyBIOS'
+	fi
+	pass 'run creates Linux EFI instance without legacyBIOS'
+}
+
+test_run_creates_macos_instance_without_legacy_bios() {
+	local log
+	local project
+
+	log=$TEMP/darwin.log
+	project=$TEMP/project-darwin
+	mkdir -p "$project" "$TEMP/sys-firmware-darwin"
+	: >"$log"
+	make_fake_limactl "$TEMP/bin"
+	make_fake_uname "$TEMP/bin" Darwin
+
+	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware-darwin run_there "$project" run pwd
+
+	if [[ $(cat "$log") == *'.firmware.legacyBIOS = true'* ]]; then
+		fail 'macOS instance should not use legacyBIOS'
+	fi
+	pass 'run creates macOS instance without legacyBIOS'
+}
+
+test_help_command
+test_run_creates_linux_legacy_instance_with_legacy_bios
+test_run_creates_linux_efi_instance_without_legacy_bios
+test_run_creates_macos_instance_without_legacy_bios

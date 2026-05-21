@@ -50,6 +50,29 @@ hash_path() {
 	fi
 }
 
+host_needs_legacy_bios() {
+	local firmware
+	local kernel
+
+	firmware=${THERE_SYS_FIRMWARE:-/sys/firmware}
+	kernel=$(uname -s)
+	case $kernel in
+	Darwin)
+		return 1
+	;;
+	Linux)
+		if [[ -d $firmware/efi ]]; then
+			return 1
+		fi
+
+		[[ -d $firmware ]]
+	;;
+	*)
+		return 1
+	;;
+	esac
+}
+
 instance_exists() {
 	local name=$1
 
@@ -78,6 +101,7 @@ ensure_instance() {
 	local name=$1
 	local path=$2
 	local image=$3
+	local -a start_args
 	local status
 
 	if instance_exists "$name"; then
@@ -92,11 +116,17 @@ ensure_instance() {
 		return
 	fi
 
-	limactl start --name="$name" \
-		--containerd none \
-		--set ".mounts = [{\"location\": \"$path\", \"mountPoint\": \"/here\", \"writable\": true}]" \
-		--set ".firmware.legacyBIOS = true" \
-		"$image"
+	start_args=(
+		--name="$name"
+		--containerd none
+		--set ".mounts = [{\"location\": \"$path\", \"mountPoint\": \"/here\", \"writable\": true}]"
+	)
+
+	if host_needs_legacy_bios; then
+		start_args+=(--set ".firmware.legacyBIOS = true")
+	fi
+
+	limactl start "${start_args[@]}" "$image"
 }
 
 start_instance() {
@@ -158,11 +188,32 @@ stop_instance() {
 
 usage() {
 	cat <<-EOF
-	Usage:
-	  ${0##*/} [auto|start|stop|destroy|prune]
-	  ${0##*/} run COMMAND [ARG...]
+	${0##*/}: project-local Lima VM wrapper
 
-	Run this command through a symlink named after the image key to select a non-default image.
+	Model:
+	  - Current physical directory is the project root.
+	  - Project root is mounted writable in the guest as /here.
+	  - Instance name is <image>-<dir>-<path-hash>.
+	  - Command basename selects image; "there" selects "ubuntu".
+
+	Usage:
+	  ${0##*/} [auto]              ensure VM, enter shell at /here
+	  ${0##*/} start               start existing VM, enter shell
+	  ${0##*/} run CMD [ARG...]    ensure VM, run command at /here
+	  ${0##*/} stop                stop VM if running
+	  ${0##*/} destroy             delete VM if present
+	  ${0##*/} prune               run limactl prune
+	  ${0##*/} help                show this help
+
+	Behavior:
+	  - auto and run create the VM when missing; start does not.
+	  - stop and destroy are idempotent for missing/stopped VMs.
+	  - Linux hosts booted without EFI use Lima legacyBIOS mode.
+	  - macOS and Linux EFI hosts do not force legacyBIOS.
+
+	Examples:
+	  ${0##*/}                     enter this project's VM
+	  ${0##*/} run pwd             prints /here
 	EOF
 }
 
