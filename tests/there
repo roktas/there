@@ -104,6 +104,23 @@ test_run_creates_linux_legacy_instance_with_legacy_bios() {
 	pass 'run creates Linux legacy instance with legacyBIOS'
 }
 
+test_shell_preserves_env_when_lima_shellenv_is_set() {
+	local log
+	local project
+
+	log=$TEMP/env.log
+	project=$TEMP/project-env
+	mkdir -p "$project" "$TEMP/sys-firmware-env/efi"
+	: >"$log"
+	make_fake_limactl "$TEMP/bin"
+	make_fake_uname "$TEMP/bin" Linux
+
+	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware-env LIMA_SHELLENV_BLOCK='*' run_there "$project" run env
+
+	assert_contains "$(cat "$log")" 'shell --preserve-env --workdir /here ubuntu-project-env-'
+	pass 'run preserves env when LIMA_SHELLENV_BLOCK is set'
+}
+
 test_run_creates_linux_efi_instance_without_legacy_bios() {
 	local log
 	local project
@@ -144,5 +161,6 @@ test_run_creates_macos_instance_without_legacy_bios() {
 
 test_help_command
 test_run_creates_linux_legacy_instance_with_legacy_bios
+test_shell_preserves_env_when_lima_shellenv_is_set
 test_run_creates_linux_efi_instance_without_legacy_bios
 test_run_creates_macos_instance_without_legacy_bios

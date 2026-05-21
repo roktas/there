@@ -24,6 +24,9 @@ same directory while reducing collisions between directories that have the same 
 The current directory is mounted in the guest as `/here` with write access. Commands executed through `there run` and
 interactive shells entered through `there` or `there start` use `/here` as the guest working directory.
 
+Guest shells do not preserve host environment variables by default. If `LIMA_SHELLENV_ALLOW` or `LIMA_SHELLENV_BLOCK` is
+set, `there` passes Lima's `--preserve-env` flag and lets Lima apply those allow/block rules.
+
 ## Image Selection
 
 `there` determines the image key from the executable name:
@@ -120,6 +123,7 @@ instructions. The output documents:
 
 - the project-local VM model
 - the `/here` mount contract
+- opt-in shell environment preservation
 - instance naming shape
 - image selection by command basename
 - supported commands

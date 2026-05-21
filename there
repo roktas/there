@@ -97,6 +97,12 @@ instance_status() {
 		awk -v name="$name" '$1 == name { print $2; found = 1 } END { exit found ? 0 : 1 }'
 }
 
+shell_env_args() {
+	if [[ -n ${LIMA_SHELLENV_ALLOW:-} || -n ${LIMA_SHELLENV_BLOCK:-} ]]; then
+		printf '%s\n' --preserve-env
+	fi
+}
+
 ensure_instance() {
 	local name=$1
 	local path=$2
@@ -154,19 +160,23 @@ prune_cache() {
 
 run_instance() {
 	local name=$1
+	local -a shell_args
 	shift
 
 	if (($# == 0)); then
 		abort "run requires a command"
 	fi
 
-	limactl shell --workdir /here "$name" -- "$@"
+	mapfile -t shell_args < <(shell_env_args)
+	limactl shell "${shell_args[@]}" --workdir /here "$name" -- "$@"
 }
 
 shell_instance() {
 	local name=$1
+	local -a shell_args
 
-	exec limactl shell --workdir /here "$name"
+	mapfile -t shell_args < <(shell_env_args)
+	exec limactl shell "${shell_args[@]}" --workdir /here "$name"
 }
 
 stop_instance() {
@@ -209,6 +219,7 @@ usage() {
 	Behavior:
 	  - auto and run create the VM when missing; start does not.
 	  - stop and destroy are idempotent for missing/stopped VMs.
+	  - Set LIMA_SHELLENV_ALLOW/BLOCK to opt into env propagation.
 	  - Linux hosts booted without EFI use Lima legacyBIOS mode.
 	  - macOS and Linux EFI hosts do not force legacyBIOS.
 
