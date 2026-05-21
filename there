@@ -118,6 +118,7 @@ ensure_instance() {
 
 	start_args=(
 		--name="$name"
+		--tty=false
 		--containerd none
 		--set ".mounts = [{\"location\": \"$path\", \"mountPoint\": \"/here\", \"writable\": true}]"
 	)

@@ -98,6 +98,7 @@ test_run_creates_linux_legacy_instance_with_legacy_bios() {
 	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware run_there "$project" run pwd
 
 	assert_contains "$(cat "$log")" '.firmware.legacyBIOS = true'
+	assert_contains "$(cat "$log")" '--tty=false'
 	assert_contains "$(cat "$log")" "--set .mounts = [{\"location\": \"$project\", \"mountPoint\": \"/here\", \"writable\": true}]"
 	assert_contains "$(cat "$log")" 'shell --workdir /here ubuntu-project-'
 	pass 'run creates Linux legacy instance with legacyBIOS'

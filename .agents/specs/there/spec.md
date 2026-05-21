@@ -53,9 +53,12 @@ If the instance exists but is not running, `there` force-stops any stale state, 
 If the instance does not exist, `there` creates it with:
 
 - `--containerd none`
+- `--tty=false`
 - one writable mount from the host physical current directory to guest `/here`
 - `.firmware.legacyBIOS = true` only when the host is detected as Linux booted without EFI
 - the selected image URL
+
+`--tty=false` disables Lima's interactive first-run configuration menu and proceeds with the generated configuration.
 
 ## Host Firmware Detection
 
