@@ -2,6 +2,15 @@
 
 This repository develops thin helper scripts around Lima.
 
+## Design Principles
+
+- Preserve Lima semantics unless there is a strong, explicit reason to do otherwise.
+- Do not add wrappers for operations that `limactl` already makes easy.
+- When behavior needs detailed control, prefer exposing or documenting the relevant `limactl` usage instead of hiding it
+  behind a new abstraction.
+- Assume users have practical Lima knowledge.
+- Avoid persistent state, generated configuration files, and repo-local caches unless they are clearly necessary.
+
 ## Canonical Behavior
 
 - `there` behavior is specified in `.agents/specs/there/spec.md`.
