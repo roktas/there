@@ -42,6 +42,13 @@ list)
 	exit 0
 ;;
 shell)
+	for arg in "$@"; do
+		# shellcheck disable=SC2016
+		if [[ $arg == 'getent passwd "$(id -un)" | cut -d: -f7' ]]; then
+			printf '%s\n' "${THERE_GUEST_SHELL:-}"
+			exit 0
+		fi
+	done
 	exit 0
 ;;
 *)
@@ -100,7 +107,7 @@ test_run_creates_linux_legacy_instance_with_legacy_bios() {
 	assert_contains "$(cat "$log")" '.firmware.legacyBIOS = true'
 	assert_contains "$(cat "$log")" '--tty=false'
 	assert_contains "$(cat "$log")" "--set .mounts = [{\"location\": \"$project\", \"mountPoint\": \"/here\", \"writable\": true}]"
-	assert_contains "$(cat "$log")" 'shell --workdir /here ubuntu-project-'
+	assert_contains "$(cat "$log")" '--workdir /here ubuntu-project-'
 	pass 'run creates Linux legacy instance with legacyBIOS'
 }
 
@@ -119,6 +126,24 @@ test_shell_preserves_env_when_lima_shellenv_is_set() {
 
 	assert_contains "$(cat "$log")" 'shell --preserve-env --workdir /here ubuntu-project-env-'
 	pass 'run preserves env when LIMA_SHELLENV_BLOCK is set'
+}
+
+test_auto_uses_guest_login_shell_when_available() {
+	local log
+	local project
+
+	log=$TEMP/login-shell.log
+	project=$TEMP/project-login-shell
+	mkdir -p "$project" "$TEMP/sys-firmware-login-shell/efi"
+	: >"$log"
+	make_fake_limactl "$TEMP/bin"
+	make_fake_uname "$TEMP/bin" Linux
+
+	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware-login-shell THERE_GUEST_SHELL=/usr/bin/fish run_there "$project"
+
+	assert_contains "$(cat "$log")" 'shell --tty=false --workdir /here ubuntu-project-login-shell-'
+	assert_contains "$(cat "$log")" '--shell /usr/bin/fish --workdir /here ubuntu-project-login-shell-'
+	pass 'auto uses guest login shell when available'
 }
 
 test_run_creates_linux_efi_instance_without_legacy_bios() {
@@ -162,5 +187,6 @@ test_run_creates_macos_instance_without_legacy_bios() {
 test_help_command
 test_run_creates_linux_legacy_instance_with_legacy_bios
 test_shell_preserves_env_when_lima_shellenv_is_set
+test_auto_uses_guest_login_shell_when_available
 test_run_creates_linux_efi_instance_without_legacy_bios
 test_run_creates_macos_instance_without_legacy_bios

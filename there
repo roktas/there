@@ -103,6 +103,13 @@ shell_env_args() {
 	fi
 }
 
+guest_login_shell() {
+	local name=$1
+
+	# shellcheck disable=SC2016
+	limactl shell --tty=false --workdir /here "$name" -- sh -lc 'getent passwd "$(id -un)" | cut -d: -f7' || true
+}
+
 ensure_instance() {
 	local name=$1
 	local path=$2
@@ -173,9 +180,15 @@ run_instance() {
 
 shell_instance() {
 	local name=$1
+	local guest_shell
 	local -a shell_args
 
 	mapfile -t shell_args < <(shell_env_args)
+	guest_shell=$(guest_login_shell "$name")
+	if [[ -n $guest_shell ]]; then
+		shell_args+=(--shell "$guest_shell")
+	fi
+
 	exec limactl shell "${shell_args[@]}" --workdir /here "$name"
 }
 
