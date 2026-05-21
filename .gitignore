@@ -1,0 +1,7 @@
+!_/
+!_/**
+*.pyc
+.agents/state/
+.antigravitycli/
+.codex/
+__pycache__/
