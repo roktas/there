@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail; shopt -s nullglob; [[ -z ${TRACE:-} ]] || set -x; unset CDPATH; IFS=$' \n'
+
+declare -A IMAGES=(
+	[ubuntu]=https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img
+)
+
+abort() {
+	warn "E: $*"
+	exit 1
+}
+
+current_dir() {
+	pwd -P
+}
+
+destroy_instance() {
+	local name=$1
+
+	if ! instance_exists "$name"; then
+		warn "W: Lima instance does not exist: $name"
+		return
+	fi
+
+	limactl stop "$name" || true
+	limactl --tty=false delete "$name"
+}
+
+image_key() {
+	local command
+
+	command=${0##*/}
+	if [[ $command == here ]]; then
+		printf '%s\n' ubuntu
+	else
+		printf '%s\n' "$command"
+	fi
+}
+
+hash_path() {
+	local path=$1
+
+	if command -v md5sum &>/dev/null; then
+		printf '%s' "$path" | md5sum | cut -c1-6
+	elif command -v md5 &>/dev/null; then
+		printf '%s' "$path" | md5 -q | cut -c1-6
+	else
+		abort "md5sum or md5 is required"
+	fi
+}
+
+instance_exists() {
+	local name=$1
+
+	limactl list --format '{{.Name}}' | grep -Fxq "$name"
+}
+
+instance_name() {
+	local path=$1
+	local image=$2
+	local base
+	local hash
+
+	base=${path##*/}
+	hash=$(hash_path "$path")
+	printf '%s-%s-%s\n' "$image" "$base" "$hash"
+}
+
+instance_status() {
+	local name=$1
+
+	limactl list --format '{{.Name}} {{.Status}}' |
+		awk -v name="$name" '$1 == name { print $2; found = 1 } END { exit found ? 0 : 1 }'
+}
+
+ensure_instance() {
+	local name=$1
+	local path=$2
+	local image=$3
+	local status
+
+	if instance_exists "$name"; then
+		status=$(instance_status "$name")
+		if [[ $status == Running ]]; then
+			return
+		fi
+
+		limactl stop -f "$name" || true
+		limactl start "$name"
+		printf '%s\n' "$name"
+		return
+	fi
+
+	limactl start --name="$name" \
+		--containerd none \
+		--set ".mounts = [{\"location\": \"$path\", \"mountPoint\": \"/here\", \"writable\": true}]" \
+		--set ".firmware.legacyBIOS = true" \
+		"$image"
+}
+
+start_instance() {
+	local name=$1
+	local status
+
+	if ! instance_exists "$name"; then
+		warn "W: Lima instance does not exist: $name"
+		return 1
+	fi
+
+	status=$(instance_status "$name")
+	if [[ $status == Running ]]; then
+		return
+	fi
+
+	limactl stop -f "$name" || true
+	limactl start "$name"
+}
+
+prune_cache() {
+	limactl prune
+}
+
+run_instance() {
+	local name=$1
+	shift
+
+	if (($# == 0)); then
+		abort "run requires a command"
+	fi
+
+	limactl shell --workdir /here "$name" -- "$@"
+}
+
+shell_instance() {
+	local name=$1
+
+	exec limactl shell --workdir /here "$name"
+}
+
+stop_instance() {
+	local name=$1
+	local status
+
+	if ! instance_exists "$name"; then
+		warn "W: Lima instance does not exist: $name"
+		return
+	fi
+
+	status=$(instance_status "$name")
+	if [[ $status != Running ]]; then
+		warn "W: Lima instance is not running: $name ($status)"
+		return
+	fi
+
+	limactl stop "$name"
+}
+
+usage() {
+	cat <<-EOF
+	Usage:
+	  ${0##*/} [auto|start|stop|destroy|prune]
+	  ${0##*/} run COMMAND [ARG...]
+
+	Run this command through a symlink named after the image key to select a non-default image.
+	EOF
+}
+
+warn() {
+	echo -e "$*" >&2
+}
+
+main() {
+	local command
+	local image
+	local key
+	local name
+	local path
+
+	path=$(current_dir)
+	command=${1:-auto}
+
+	case $command in
+	-h|--help|help)
+		usage
+		return
+	;;
+	esac
+
+	key=$(image_key)
+	image=${IMAGES[$key]:-}
+
+	if [[ -z $image ]]; then
+		abort "unsupported Lima image: $key"
+	fi
+
+	name=$(instance_name "$path" "$key")
+
+	case $command in
+	auto)
+		ensure_instance "$name" "$path" "$image"
+		shell_instance "$name"
+	;;
+	start)
+		start_instance "$name"
+		shell_instance "$name"
+	;;
+	stop)
+		stop_instance "$name"
+	;;
+	destroy)
+		destroy_instance "$name"
+	;;
+	prune)
+		prune_cache
+	;;
+	run)
+		shift
+		ensure_instance "$name" "$path" "$image"
+		run_instance "$name" "$@"
+	;;
+	*)
+		usage
+		exit 2
+	;;
+	esac
+}
+
+main "$@"
