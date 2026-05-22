@@ -60,7 +60,7 @@ shell)
 	for arg in "$@"; do
 		# shellcheck disable=SC2016
 		if [[ $arg == 'getent passwd "$(id -un)" | cut -d: -f7' ]]; then
-			printf '%s\n' "${THERE_GUEST_SHELL:-}"
+			printf '%s\r\n' "${THERE_GUEST_SHELL:-}"
 			exit 0
 		fi
 	done
@@ -132,6 +132,25 @@ test_auto_uses_guest_login_shell_when_available() {
 	assert_contains "$(cat "$log")" 'shell --tty=false --workdir /here ubuntu-project-login-shell-'
 	assert_contains "$(cat "$log")" '--shell /usr/bin/fish --workdir /here ubuntu-project-login-shell-'
 	pass 'auto uses guest login shell when available'
+}
+
+test_auto_strips_carriage_return_from_guest_shell() {
+	local log
+	local project
+
+	log=$TEMP/cr-shell.log
+	project=$TEMP/project-cr-shell
+	mkdir -p "$project"
+	: >"$log"
+	make_fake_limactl "$TEMP/bin"
+
+	THERE_LIMACTL_LOG=$log THERE_GUEST_SHELL=/bin/zsh run_there "$project"
+
+	assert_contains "$(cat "$log")" '--shell /bin/zsh --workdir /here ubuntu-project-cr-shell-'
+	if [[ $(cat "$log") == *$'--shell /bin/zsh\r --workdir'* ]]; then
+		fail 'guest shell path should not contain carriage return'
+	fi
+	pass 'auto strips carriage return from guest shell path'
 }
 
 test_create_failure_runs_doctor() {
@@ -350,6 +369,7 @@ main() {
 	trap cleanup EXIT HUP INT QUIT TERM
 
 	test_auto_uses_guest_login_shell_when_available
+test_auto_strips_carriage_return_from_guest_shell
 	test_create_failure_runs_doctor
 	test_doctor_reports_ok_when_prerequisites_exist
 	test_doctor_suggests_arch_packages

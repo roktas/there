@@ -129,7 +129,7 @@ guest_login_shell() {
 	local name=$1
 
 	# shellcheck disable=SC2016
-	limactl shell --tty=false --workdir /here "$name" -- sh -lc 'getent passwd "$(id -un)" | cut -d: -f7' || true
+	limactl shell --tty=false --workdir /here "$name" -- sh -lc 'getent passwd "$(id -un)" | cut -d: -f7' | tr -d '\r' || true
 }
 
 hash_path() {
