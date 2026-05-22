@@ -60,6 +60,8 @@ shell)
 	for arg in "$@"; do
 		# shellcheck disable=SC2016
 		if [[ $arg == 'getent passwd "$(id -un)" | cut -d: -f7' ]]; then
+			printf '\033[1mMOTD\033[0m\n'
+			printf 'OS: Ubuntu 26.04\n'
 			printf '%s\r\n' "${THERE_GUEST_SHELL:-}"
 			exit 0
 		fi
