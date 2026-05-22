@@ -12,7 +12,7 @@ abort() {
 }
 
 warn() {
-	echo -e "$*" >&2
+	printf '%s\n' "$*" >&2
 }
 
 # ------------------------------------------------------------------------------------------------------------------------
@@ -129,7 +129,7 @@ guest_login_shell() {
 	local name=$1
 
 	# shellcheck disable=SC2016
-	limactl shell --tty=false --workdir /here "$name" -- sh -lc 'getent passwd "$(id -un)" | cut -d: -f7' | tail -n 1 | tr -d '\r' || true
+	limactl shell --tty=false --workdir /here "$name" -- sh -lc 'getent passwd "$(id -un)" | cut -d: -f7' | tail -n 1 | tr -d $'\r' || true
 }
 
 hash_path() {
