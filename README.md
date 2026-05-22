@@ -1,10 +1,7 @@
-# Liman
+# There
 
-[Lima](https://lima-vm.io/) Nuts & Bolts.
-
-### `there`
-
-Start or enter the project-local Ubuntu instance. The current directory is mounted writable as `/here`.
+A [Lima](https://lima-vm.io/) wrapper to start or enter the project-local Ubuntu instance. The current directory is
+mounted writable as `/here` (à la [Vagrant](https://developer.hashicorp.com/vagrant)'s `/vagrant` style).
 
 ```bash
 there
