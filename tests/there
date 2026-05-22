@@ -369,7 +369,7 @@ main() {
 	trap cleanup EXIT HUP INT QUIT TERM
 
 	test_auto_uses_guest_login_shell_when_available
-test_auto_strips_carriage_return_from_guest_shell
+	test_auto_strips_carriage_return_from_guest_shell
 	test_create_failure_runs_doctor
 	test_doctor_reports_ok_when_prerequisites_exist
 	test_doctor_suggests_arch_packages
