@@ -1,4 +1,4 @@
-# Liman Agent Notes
+# There Agent Notes
 
 This repository develops thin helper scripts around Lima.
 
