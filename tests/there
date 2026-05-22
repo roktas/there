@@ -5,6 +5,17 @@ set -Eeuo pipefail; shopt -s nullglob; [[ -z ${TRACE:-} ]] || set -x; unset CDPA
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TEMP=$(mktemp -d)
 
+# ------------------------------------------------------------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------------------------------------------------------------
+
+assert_contains() {
+	local haystack=$1
+	local needle=$2
+
+	[[ $haystack == *"$needle"* ]] || fail "expected output to contain: $needle"
+}
+
 cleanup() {
 	local status=$?
 
@@ -12,22 +23,21 @@ cleanup() {
 	exit "$status"
 }
 
-trap cleanup EXIT HUP INT QUIT TERM
-
 fail() {
 	printf 'not ok - %s\n' "$*" >&2
 	exit 1
 }
 
-pass() {
-	printf 'ok - %s\n' "$*"
-}
+make_fake_command() {
+	local dir=$1
+	local command=$2
 
-assert_contains() {
-	local haystack=$1
-	local needle=$2
-
-	[[ $haystack == *"$needle"* ]] || fail "expected output to contain: $needle"
+	mkdir -p "$dir"
+	cat >"$dir/$command" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+	chmod +x "$dir/$command"
 }
 
 make_fake_limactl() {
@@ -39,8 +49,13 @@ make_fake_limactl() {
 printf '%s\n' "$*" >>"${THERE_LIMACTL_LOG:?}"
 case ${1:-} in
 list)
+	if [[ ${THERE_LIMACTL_LIST:-} == names ]]; then
+		printf '%s\n' "${THERE_LIMACTL_NAME:-}"
+	elif [[ -n ${THERE_LIMACTL_NAME:-} ]]; then
+		printf '%s %s\n' "$THERE_LIMACTL_NAME" "${THERE_LIMACTL_STATUS:-Running}"
+	fi
 	exit 0
-;;
+	;;
 shell)
 	for arg in "$@"; do
 		# shellcheck disable=SC2016
@@ -50,25 +65,31 @@ shell)
 		fi
 	done
 	exit 0
-;;
+	;;
 *)
+	if [[ ${THERE_LIMACTL_FAIL_START:-} == 1 && ${1:-} == start ]]; then
+		exit 1
+	fi
 	exit 0
-;;
+	;;
 esac
 EOF
 	chmod +x "$dir/limactl"
 }
 
-make_fake_uname() {
-	local dir=$1
-	local kernel=$2
+make_os_release() {
+	local path=$1
+	local id=$2
+	local like=${3:-}
 
-	mkdir -p "$dir"
-	cat >"$dir/uname" <<EOF
-#!/usr/bin/env bash
-printf '%s\n' "$kernel"
+	cat >"$path" <<EOF
+ID=$id
+ID_LIKE="$like"
 EOF
-	chmod +x "$dir/uname"
+}
+
+pass() {
+	printf 'ok - %s\n' "$*"
 }
 
 run_there() {
@@ -81,34 +102,163 @@ run_there() {
 	)
 }
 
+test_instance_name() {
+	local image=$1
+	local path=$2
+	local base
+	local hash
+
+	base=${path##*/}
+	hash=$(printf '%s' "$path" | md5sum | cut -c1-6)
+	printf '%s-%s-%s\n' "$image" "$base" "$hash"
+}
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Commands
+# ------------------------------------------------------------------------------------------------------------------------
+
+test_auto_uses_guest_login_shell_when_available() {
+	local log
+	local project
+
+	log=$TEMP/login-shell.log
+	project=$TEMP/project-login-shell
+	mkdir -p "$project"
+	: >"$log"
+	make_fake_limactl "$TEMP/bin"
+
+	THERE_LIMACTL_LOG=$log THERE_GUEST_SHELL=/usr/bin/fish run_there "$project"
+
+	assert_contains "$(cat "$log")" 'shell --tty=false --workdir /here ubuntu-project-login-shell-'
+	assert_contains "$(cat "$log")" '--shell /usr/bin/fish --workdir /here ubuntu-project-login-shell-'
+	pass 'auto uses guest login shell when available'
+}
+
+test_create_failure_runs_doctor() {
+	local log
+	local output
+	local project
+
+	log=$TEMP/create-fail.log
+	project=$TEMP/project-create-fail
+	mkdir -p "$project" "$TEMP/missing-bin"
+	: >"$log"
+	make_fake_limactl "$TEMP/bin"
+
+	if output=$(THERE_COMMAND_DIR=$TEMP/missing-bin THERE_LIMACTL_FAIL_START=1 THERE_LIMACTL_LOG=$log run_there "$project" run pwd 2>&1); then
+		fail 'run should fail when instance creation fails'
+	fi
+
+	assert_contains "$output" 'W: Lima instance creation failed; running doctor'
+	assert_contains "$output" 'Host prerequisites:'
+	assert_contains "$output" 'missing  limactl'
+	pass 'create failure runs doctor'
+}
+
+test_doctor_reports_ok_when_prerequisites_exist() {
+	local firmware
+	local output
+	local project
+
+	firmware=$TEMP/OVMF.fd
+	project=$TEMP/project-doctor-ok
+	mkdir -p "$project"
+	: >"$firmware"
+	make_fake_limactl "$TEMP/bin"
+	make_fake_command "$TEMP/bin" qemu-system-x86_64
+	make_fake_command "$TEMP/bin" qemu-img
+
+	output=$(THERE_COMMAND_DIR=$TEMP/bin THERE_LIMACTL_LOG=$TEMP/doctor-ok.log THERE_FIRMWARE_PATHS=$firmware run_there "$project" doctor)
+
+	assert_contains "$output" 'ok       limactl'
+	assert_contains "$output" 'ok       qemu-system-x86_64'
+	assert_contains "$output" 'ok       qemu-img'
+	assert_contains "$output" "ok       firmware             $firmware"
+	pass 'doctor reports ok when prerequisites exist'
+}
+
+test_doctor_suggests_arch_packages() {
+	local os_release
+	local output
+
+	os_release=$TEMP/arch-os-release
+	make_os_release "$os_release" arch
+
+	mkdir -p "$TEMP/missing-bin"
+	if output=$(THERE_COMMAND_DIR=$TEMP/missing-bin THERE_LIMACTL_LOG=$TEMP/doctor-arch.log THERE_OS_RELEASE=$os_release "$ROOT/there" doctor); then
+		fail 'doctor should fail when prerequisites are missing'
+	fi
+
+	assert_contains "$output" 'sudo pacman -S qemu-system-x86 qemu-img edk2-ovmf'
+	pass 'doctor suggests Arch packages'
+}
+
+test_doctor_suggests_debian_packages() {
+	local os_release
+	local output
+	local project
+
+	os_release=$TEMP/debian-os-release
+	project=$TEMP/project-doctor-debian
+	mkdir -p "$project"
+	make_os_release "$os_release" debian
+
+	mkdir -p "$TEMP/missing-bin"
+	if output=$(THERE_COMMAND_DIR=$TEMP/missing-bin THERE_LIMACTL_LOG=$TEMP/doctor-debian.log THERE_OS_RELEASE=$os_release "$ROOT/there" doctor); then
+		fail 'doctor should fail when prerequisites are missing'
+	fi
+
+	assert_contains "$output" 'missing  limactl'
+	assert_contains "$output" 'sudo apt install qemu-system-x86 qemu-utils ovmf'
+	pass 'doctor suggests Debian packages'
+}
+
+test_doctor_suggests_fedora_packages() {
+	local os_release
+	local output
+
+	os_release=$TEMP/fedora-os-release
+	make_os_release "$os_release" fedora
+
+	mkdir -p "$TEMP/missing-bin"
+	if output=$(THERE_COMMAND_DIR=$TEMP/missing-bin THERE_LIMACTL_LOG=$TEMP/doctor-fedora.log THERE_OS_RELEASE=$os_release "$ROOT/there" doctor); then
+		fail 'doctor should fail when prerequisites are missing'
+	fi
+
+	assert_contains "$output" 'sudo dnf install qemu-system-x86 qemu-img edk2-ovmf'
+	pass 'doctor suggests Fedora packages'
+}
+
 test_help_command() {
 	local output
 
 	output=$("$ROOT/there" help)
 	assert_contains "$output" 'there: project-local Lima VM wrapper'
+	assert_contains "$output" 'there status              show project VM status'
 	assert_contains "$output" 'there help                show this help'
 	assert_contains "$output" 'Project root is mounted writable in the guest as /here.'
 	pass 'help command prints agent-friendly reference'
 }
 
-test_run_creates_linux_legacy_instance_with_legacy_bios() {
+test_run_creates_instance_without_legacy_bios_management() {
 	local log
 	local project
 
-	log=$TEMP/legacy.log
+	log=$TEMP/create.log
 	project=$TEMP/project
-	mkdir -p "$project" "$TEMP/sys-firmware"
+	mkdir -p "$project"
 	: >"$log"
 	make_fake_limactl "$TEMP/bin"
-	make_fake_uname "$TEMP/bin" Linux
 
-	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware run_there "$project" run pwd
+	THERE_LIMACTL_LOG=$log run_there "$project" run pwd
 
-	assert_contains "$(cat "$log")" '.firmware.legacyBIOS = true'
 	assert_contains "$(cat "$log")" '--tty=false'
 	assert_contains "$(cat "$log")" "--set .mounts = [{\"location\": \"$project\", \"mountPoint\": \"/here\", \"writable\": true}]"
 	assert_contains "$(cat "$log")" '--workdir /here ubuntu-project-'
-	pass 'run creates Linux legacy instance with legacyBIOS'
+	if [[ $(cat "$log") == *'.firmware.legacyBIOS'* ]]; then
+		fail 'instance creation should not manage legacyBIOS'
+	fi
+	pass 'run creates instance without legacyBIOS management'
 }
 
 test_shell_preserves_env_when_lima_shellenv_is_set() {
@@ -117,76 +267,101 @@ test_shell_preserves_env_when_lima_shellenv_is_set() {
 
 	log=$TEMP/env.log
 	project=$TEMP/project-env
-	mkdir -p "$project" "$TEMP/sys-firmware-env/efi"
+	mkdir -p "$project"
 	: >"$log"
 	make_fake_limactl "$TEMP/bin"
-	make_fake_uname "$TEMP/bin" Linux
 
-	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware-env LIMA_SHELLENV_BLOCK='*' run_there "$project" run env
+	THERE_LIMACTL_LOG=$log LIMA_SHELLENV_BLOCK='*' run_there "$project" run env
 
 	assert_contains "$(cat "$log")" 'shell --preserve-env --workdir /here ubuntu-project-env-'
 	pass 'run preserves env when LIMA_SHELLENV_BLOCK is set'
 }
 
-test_auto_uses_guest_login_shell_when_available() {
+test_status_ignores_other_instances() {
 	local log
+	local output
 	local project
 
-	log=$TEMP/login-shell.log
-	project=$TEMP/project-login-shell
-	mkdir -p "$project" "$TEMP/sys-firmware-login-shell/efi"
+	log=$TEMP/status-other.log
+	project=$TEMP/project-status-other
+	mkdir -p "$project"
 	: >"$log"
 	make_fake_limactl "$TEMP/bin"
-	make_fake_uname "$TEMP/bin" Linux
 
-	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware-login-shell THERE_GUEST_SHELL=/usr/bin/fish run_there "$project"
+	output=$(THERE_LIMACTL_LOG=$log THERE_LIMACTL_LIST=status THERE_LIMACTL_NAME=ubuntu-other-123456 THERE_LIMACTL_STATUS=Running run_there "$project" status)
 
-	assert_contains "$(cat "$log")" 'shell --tty=false --workdir /here ubuntu-project-login-shell-'
-	assert_contains "$(cat "$log")" '--shell /usr/bin/fish --workdir /here ubuntu-project-login-shell-'
-	pass 'auto uses guest login shell when available'
+	assert_contains "$output" 'absent  ubuntu-project-status-other-'
+	pass 'status ignores other instances'
 }
 
-test_run_creates_linux_efi_instance_without_legacy_bios() {
-	local log
+test_status_reports_absent_instance() {
+	local output
 	local project
 
-	log=$TEMP/efi.log
-	project=$TEMP/project-efi
-	mkdir -p "$project" "$TEMP/sys-firmware-efi/efi"
-	: >"$log"
+	project=$TEMP/project-status-absent
+	mkdir -p "$project"
 	make_fake_limactl "$TEMP/bin"
-	make_fake_uname "$TEMP/bin" Linux
 
-	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware-efi run_there "$project" run pwd
+	output=$(THERE_LIMACTL_LOG=$TEMP/status-absent.log run_there "$project" status)
 
-	if [[ $(cat "$log") == *'.firmware.legacyBIOS = true'* ]]; then
-		fail 'Linux EFI instance should not use legacyBIOS'
-	fi
-	pass 'run creates Linux EFI instance without legacyBIOS'
+	assert_contains "$output" 'absent  ubuntu-project-status-absent-'
+	pass 'status reports absent instance'
 }
 
-test_run_creates_macos_instance_without_legacy_bios() {
-	local log
+test_status_reports_running_instance_in_green() {
+	local name
+	local output
 	local project
 
-	log=$TEMP/darwin.log
-	project=$TEMP/project-darwin
-	mkdir -p "$project" "$TEMP/sys-firmware-darwin"
-	: >"$log"
+	project=$TEMP/project-status-running
+	mkdir -p "$project"
 	make_fake_limactl "$TEMP/bin"
-	make_fake_uname "$TEMP/bin" Darwin
+	name=$(test_instance_name ubuntu "$project")
 
-	THERE_LIMACTL_LOG=$log THERE_SYS_FIRMWARE=$TEMP/sys-firmware-darwin run_there "$project" run pwd
+	output=$(THERE_LIMACTL_LOG=$TEMP/status-running.log THERE_LIMACTL_LIST=status THERE_LIMACTL_NAME=$name THERE_LIMACTL_STATUS=Running run_there "$project" status)
 
-	if [[ $(cat "$log") == *'.firmware.legacyBIOS = true'* ]]; then
-		fail 'macOS instance should not use legacyBIOS'
-	fi
-	pass 'run creates macOS instance without legacyBIOS'
+	assert_contains "$output" $'\033[32mRunning\033[0m'
+	assert_contains "$output" "$name"
+	pass 'status reports running instance in green'
 }
 
-test_help_command
-test_run_creates_linux_legacy_instance_with_legacy_bios
-test_shell_preserves_env_when_lima_shellenv_is_set
-test_auto_uses_guest_login_shell_when_available
-test_run_creates_linux_efi_instance_without_legacy_bios
-test_run_creates_macos_instance_without_legacy_bios
+test_status_reports_stopped_instance_in_gray() {
+	local name
+	local output
+	local project
+
+	project=$TEMP/project-status-stopped
+	mkdir -p "$project"
+	make_fake_limactl "$TEMP/bin"
+	name=$(printf 'ubuntu-project-status-stopped-%s' "$(printf '%s' "$project" | md5sum | cut -c1-6)")
+
+	output=$(THERE_LIMACTL_LOG=$TEMP/status-stopped.log THERE_LIMACTL_LIST=status THERE_LIMACTL_NAME=$name THERE_LIMACTL_STATUS=Stopped run_there "$project" status)
+
+	assert_contains "$output" $'\033[90mStopped\033[0m'
+	assert_contains "$output" "$name"
+	pass 'status reports stopped instance in gray'
+}
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------------------------------------------------------------
+
+main() {
+	trap cleanup EXIT HUP INT QUIT TERM
+
+	test_auto_uses_guest_login_shell_when_available
+	test_create_failure_runs_doctor
+	test_doctor_reports_ok_when_prerequisites_exist
+	test_doctor_suggests_arch_packages
+	test_doctor_suggests_debian_packages
+	test_doctor_suggests_fedora_packages
+	test_help_command
+	test_run_creates_instance_without_legacy_bios_management
+	test_shell_preserves_env_when_lima_shellenv_is_set
+	test_status_ignores_other_instances
+	test_status_reports_absent_instance
+	test_status_reports_running_instance_in_green
+	test_status_reports_stopped_instance_in_gray
+}
+
+main "$@"

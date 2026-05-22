@@ -11,109 +11,60 @@ abort() {
 	exit 1
 }
 
+warn() {
+	echo -e "$*" >&2
+}
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------------------------------------------------------------
+
+command_path() {
+	local command=$1
+
+	if [[ -n ${THERE_COMMAND_DIR:-} ]]; then
+		if [[ -x $THERE_COMMAND_DIR/$command ]]; then
+			printf '%s\n' "$THERE_COMMAND_DIR/$command"
+		fi
+		return
+	fi
+
+	command -v "$command" 2>/dev/null || true
+}
+
 current_dir() {
 	pwd -P
 }
 
-destroy_instance() {
-	local name=$1
+doctor_packages() {
+	local id
+	local like
 
-	if ! instance_exists "$name"; then
-		warn "W: Lima instance does not exist: $name"
-		return
-	fi
+	id=$(os_release_value ID)
+	like=$(os_release_value ID_LIKE)
 
-	limactl stop "$name" || true
-	limactl --tty=false delete "$name"
-}
-
-image_key() {
-	local command
-
-	command=${0##*/}
-	if [[ $command == there ]]; then
-		printf '%s\n' ubuntu
-	else
-		printf '%s\n' "$command"
-	fi
-}
-
-hash_path() {
-	local path=$1
-
-	if command -v md5sum &>/dev/null; then
-		printf '%s' "$path" | md5sum | cut -c1-6
-	elif command -v md5 &>/dev/null; then
-		printf '%s' "$path" | md5 -q | cut -c1-6
-	else
-		abort "md5sum or md5 is required"
-	fi
-}
-
-host_needs_legacy_bios() {
-	local firmware
-	local kernel
-
-	firmware=${THERE_SYS_FIRMWARE:-/sys/firmware}
-	kernel=$(uname -s)
-	case $kernel in
-	Darwin)
-		return 1
-	;;
-	Linux)
-		if [[ -d $firmware/efi ]]; then
-			return 1
-		fi
-
-		[[ -d $firmware ]]
-	;;
-	*)
-		return 1
-	;;
+	case " $id $like " in
+	*" debian "*|*" ubuntu "*)
+		printf '%s\n' 'sudo apt install qemu-system-x86 qemu-utils ovmf'
+		;;
+	*" arch "*)
+		printf '%s\n' 'sudo pacman -S qemu-system-x86 qemu-img edk2-ovmf'
+		;;
+	*" fedora "*|*" rhel "*)
+		printf '%s\n' 'sudo dnf install qemu-system-x86 qemu-img edk2-ovmf'
+		;;
 	esac
-}
 
-instance_exists() {
-	local name=$1
-
-	limactl list --format '{{.Name}}' | grep -Fxq "$name"
-}
-
-instance_name() {
-	local path=$1
-	local image=$2
-	local base
-	local hash
-
-	base=${path##*/}
-	hash=$(hash_path "$path")
-	printf '%s-%s-%s\n' "$image" "$base" "$hash"
-}
-
-instance_status() {
-	local name=$1
-
-	limactl list --format '{{.Name}} {{.Status}}' |
-		awk -v name="$name" '$1 == name { print $2; found = 1 } END { exit found ? 0 : 1 }'
-}
-
-shell_env_args() {
-	if [[ -n ${LIMA_SHELLENV_ALLOW:-} || -n ${LIMA_SHELLENV_BLOCK:-} ]]; then
-		printf '%s\n' --preserve-env
+	if command -v brew &>/dev/null; then
+		printf '%s\n' 'brew install lima'
 	fi
-}
-
-guest_login_shell() {
-	local name=$1
-
-	# shellcheck disable=SC2016
-	limactl shell --tty=false --workdir /here "$name" -- sh -lc 'getent passwd "$(id -un)" | cut -d: -f7' || true
 }
 
 ensure_instance() {
 	local name=$1
 	local path=$2
 	local image=$3
+
 	local -a start_args
 	local status
 
@@ -136,50 +87,120 @@ ensure_instance() {
 		--set ".mounts = [{\"location\": \"$path\", \"mountPoint\": \"/here\", \"writable\": true}]"
 	)
 
-	if host_needs_legacy_bios; then
-		start_args+=(--set ".firmware.legacyBIOS = true")
-	fi
-
-	limactl start "${start_args[@]}" "$image"
-}
-
-start_instance() {
-	local name=$1
-	local status
-
-	if ! instance_exists "$name"; then
-		warn "W: Lima instance does not exist: $name"
+	if ! limactl start "${start_args[@]}" "$image"; then
+		warn "W: Lima instance creation failed; running doctor"
+		command.doctor || true
 		return 1
 	fi
+}
 
-	status=$(instance_status "$name")
-	if [[ $status == Running ]]; then
+firmware_path() {
+	local brew_prefix
+	local -a candidates
+	local path
+
+	IFS=: read -r -a candidates <<<"${THERE_FIRMWARE_PATHS:-}"
+	candidates+=(
+		/usr/share/ovmf/OVMF.fd
+		/usr/share/OVMF/OVMF_CODE.fd
+		/usr/share/OVMF/OVMF_CODE_4M.fd
+		/usr/share/edk2/x64/OVMF_CODE.fd
+		/usr/share/edk2/x64/OVMF_CODE.4m.fd
+		/usr/share/edk2-ovmf/x64/OVMF_CODE.fd
+		/usr/share/qemu/edk2-x86_64-code.fd
+	)
+
+	if command -v brew &>/dev/null; then
+		brew_prefix=$(brew --prefix qemu 2>/dev/null || brew --prefix 2>/dev/null || true)
+		if [[ -n $brew_prefix ]]; then
+			candidates+=("$brew_prefix/share/qemu/edk2-x86_64-code.fd")
+		fi
+	fi
+
+	for path in "${candidates[@]}"; do
+		if [[ -e $path ]]; then
+			printf '%s\n' "$path"
+			return
+		fi
+	done
+}
+
+guest_login_shell() {
+	local name=$1
+
+	# shellcheck disable=SC2016
+	limactl shell --tty=false --workdir /here "$name" -- sh -lc 'getent passwd "$(id -un)" | cut -d: -f7' || true
+}
+
+hash_path() {
+	local path=$1
+
+	if command -v md5sum &>/dev/null; then
+		printf '%s' "$path" | md5sum | cut -c1-6
+	elif command -v md5 &>/dev/null; then
+		printf '%s' "$path" | md5 -q | cut -c1-6
+	else
+		abort "md5sum or md5 is required"
+	fi
+}
+
+image_key() {
+	local command
+
+	command=${0##*/}
+	if [[ $command == there ]]; then
+		printf '%s\n' ubuntu
+	else
+		printf '%s\n' "$command"
+	fi
+}
+
+instance_exists() {
+	local name=$1
+
+	limactl list --format '{{.Name}}' | grep -Fxq "$name"
+}
+
+instance_name() {
+	local path=$1
+	local image=$2
+
+	local base
+	local hash
+
+	base=${path##*/}
+	hash=$(hash_path "$path")
+	printf '%s-%s-%s\n' "$image" "$base" "$hash"
+}
+
+instance_status() {
+	local name=$1
+
+	limactl list --format '{{.Name}} {{.Status}}' |
+		awk -v name="$name" '$1 == name { print $2; found = 1 } END { exit found ? 0 : 1 }'
+}
+
+os_release_value() {
+	local key=$1
+
+	local release=${THERE_OS_RELEASE:-/etc/os-release}
+
+	if [[ ! -r $release ]]; then
 		return
 	fi
 
-	limactl stop -f "$name" || true
-	limactl start "$name"
+	awk -F= -v key="$key" '$1 == key { gsub(/^"|"$/, "", $2); print $2; exit }' "$release"
 }
 
-prune_cache() {
-	limactl prune
-}
-
-run_instance() {
-	local name=$1
-	local -a shell_args
-	shift
-
-	if (($# == 0)); then
-		abort "run requires a command"
+shell_env_args() {
+	if [[ -n ${LIMA_SHELLENV_ALLOW:-} || -n ${LIMA_SHELLENV_BLOCK:-} ]]; then
+		printf '%s\n' --preserve-env
 	fi
-
-	mapfile -t shell_args < <(shell_env_args)
-	limactl shell "${shell_args[@]}" --workdir /here "$name" -- "$@"
 }
 
 shell_instance() {
 	local name=$1
+
 	local guest_shell
 	local -a shell_args
 
@@ -192,8 +213,144 @@ shell_instance() {
 	exec limactl shell "${shell_args[@]}" --workdir /here "$name"
 }
 
-stop_instance() {
+# ------------------------------------------------------------------------------------------------------------------------
+# Commands
+# ------------------------------------------------------------------------------------------------------------------------
+
+command.auto() {
 	local name=$1
+	local path=$2
+	local image=$3
+
+	ensure_instance "$name" "$path" "$image"
+	shell_instance "$name"
+}
+
+command.destroy() {
+	local name=$1
+
+	if ! instance_exists "$name"; then
+		warn "W: Lima instance does not exist: $name"
+		return
+	fi
+
+	limactl stop "$name" || true
+	limactl --tty=false delete "$name"
+}
+
+command.doctor() {
+	local command
+	local failures=0
+	local firmware
+	local install
+	local path
+
+	printf 'Host prerequisites:\n'
+
+	for command in limactl qemu-system-x86_64 qemu-img; do
+		path=$(command_path "$command")
+		if [[ -n $path ]]; then
+			printf '  ok       %-20s %s\n' "$command" "$path"
+		else
+			printf '  missing  %s\n' "$command"
+			((failures += 1))
+		fi
+	done
+
+	firmware=$(firmware_path)
+	if [[ -n $firmware ]]; then
+		printf '  ok       %-20s %s\n' firmware "$firmware"
+	else
+		printf '  missing  firmware\n'
+		((failures += 1))
+	fi
+
+	if ((failures == 0)); then
+		return
+	fi
+
+	install=$(doctor_packages)
+	if [[ -n $install ]]; then
+		printf '\nInstall candidates:\n%s\n' "$install"
+	else
+		printf '\nInstall QEMU, qemu-img, and OVMF/EDK2 firmware for your distribution.\n'
+	fi
+
+	return 1
+}
+
+command.help() {
+	usage
+}
+
+command.prune() {
+	limactl prune
+}
+
+command.run() {
+	local name=$1
+	local path=$2
+	local image=$3
+
+	local -a shell_args
+
+	shift 3
+
+	ensure_instance "$name" "$path" "$image"
+
+	if (($# == 0)); then
+		abort "run requires a command"
+	fi
+
+	mapfile -t shell_args < <(shell_env_args)
+	limactl shell "${shell_args[@]}" --workdir /here "$name" -- "$@"
+}
+
+command.start() {
+	local name=$1
+
+	local status
+
+	if ! instance_exists "$name"; then
+		warn "W: Lima instance does not exist: $name"
+		return 1
+	fi
+
+	status=$(instance_status "$name")
+	if [[ $status != Running ]]; then
+		limactl stop -f "$name" || true
+		limactl start "$name"
+	fi
+
+	shell_instance "$name"
+}
+
+command.status() {
+	local name=$1
+
+	local status
+
+	if ! status=$(instance_status "$name"); then
+		printf 'absent  %s\n' "$name"
+		return
+	fi
+
+	case $status in
+	Running)
+		printf '\033[32m%s\033[0m  %s\n' "$status" "$name"
+		;;
+	Stopped)
+		printf '\033[90m%s\033[0m  %s\n' "$status" "$name"
+		;;
+	*)
+		printf '%s  %s\n' "$status" "$name"
+		;;
+	esac
+}
+
+command.stop() {
+	local name=$1
+
 	local status
 
 	if ! instance_exists "$name"; then
@@ -210,6 +367,10 @@ stop_instance() {
 	limactl stop "$name"
 }
 
+# ------------------------------------------------------------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------------------------------------------------------------
+
 usage() {
 	cat <<-EOF
 	${0##*/}: project-local Lima VM wrapper
@@ -224,6 +385,8 @@ usage() {
 	  ${0##*/} [auto]              ensure VM, enter shell at /here
 	  ${0##*/} start               start existing VM, enter shell
 	  ${0##*/} run CMD [ARG...]    ensure VM, run command at /here
+	  ${0##*/} status              show project VM status
+	  ${0##*/} doctor              check host prerequisites
 	  ${0##*/} stop                stop VM if running
 	  ${0##*/} destroy             delete VM if present
 	  ${0##*/} prune               run limactl prune
@@ -231,19 +394,15 @@ usage() {
 
 	Behavior:
 	  - auto and run create the VM when missing; start does not.
+	  - status reports this directory's instance without changing it.
+	  - doctor reports missing host prerequisites; it does not install them.
 	  - stop and destroy are idempotent for missing/stopped VMs.
 	  - Set LIMA_SHELLENV_ALLOW/BLOCK to opt into env propagation.
-	  - Linux hosts booted without EFI use Lima legacyBIOS mode.
-	  - macOS and Linux EFI hosts do not force legacyBIOS.
 
 	Examples:
 	  ${0##*/}                     enter this project's VM
 	  ${0##*/} run pwd             prints /here
 	EOF
-}
-
-warn() {
-	echo -e "$*" >&2
 }
 
 main() {
@@ -258,9 +417,9 @@ main() {
 
 	case $command in
 	-h|--help|help)
-		usage
+		command.help
 		return
-	;;
+		;;
 	esac
 
 	key=$(image_key)
@@ -274,31 +433,34 @@ main() {
 
 	case $command in
 	auto)
-		ensure_instance "$name" "$path" "$image"
-		shell_instance "$name"
-	;;
-	start)
-		start_instance "$name"
-		shell_instance "$name"
-	;;
-	stop)
-		stop_instance "$name"
-	;;
+		command.auto "$name" "$path" "$image"
+		;;
 	destroy)
-		destroy_instance "$name"
-	;;
+		command.destroy "$name"
+		;;
+	doctor)
+		command.doctor
+		;;
 	prune)
-		prune_cache
-	;;
+		command.prune
+		;;
 	run)
 		shift
-		ensure_instance "$name" "$path" "$image"
-		run_instance "$name" "$@"
-	;;
+		command.run "$name" "$path" "$image" "$@"
+		;;
+	start)
+		command.start "$name"
+		;;
+	status)
+		command.status "$name"
+		;;
+	stop)
+		command.stop "$name"
+		;;
 	*)
 		usage
 		exit 2
-	;;
+		;;
 	esac
 }
 

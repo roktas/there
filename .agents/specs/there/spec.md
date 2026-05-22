@@ -58,26 +58,12 @@ If the instance does not exist, `there` creates it with:
 - `--containerd none`
 - `--tty=false`
 - one writable mount from the host physical current directory to guest `/here`
-- `.firmware.legacyBIOS = true` only when the host is detected as Linux booted without EFI
 - the selected image URL
 
 `--tty=false` disables Lima's interactive first-run configuration menu and proceeds with the generated configuration.
 
-## Host Firmware Detection
-
-`there` avoids forcing Lima's legacy BIOS mode on hosts where that setting is not needed or cannot be determined safely.
-
-The detection rules are:
-
-- macOS hosts do not use `legacyBIOS`.
-- Linux hosts with `/sys/firmware/efi` do not use `legacyBIOS`.
-- Linux hosts with `/sys/firmware` but without `/sys/firmware/efi` use `legacyBIOS`.
-- Other hosts, or hosts without an inspectable `/sys/firmware`, do not use `legacyBIOS`.
-
-This keeps the compatibility workaround scoped to Linux hosts that appear to have been booted through legacy BIOS. The
-script does not depend on `bootctl`, `efibootmgr`, or other optional EFI tooling for this decision.
-
-Tests may override the firmware sysfs root with `THERE_SYS_FIRMWARE`. Normal execution should leave it unset.
+If new instance creation fails, `there` warns, runs `there doctor` diagnostics, and returns failure. This automatic
+diagnostic is limited to the missing-instance creation path.
 
 ### `there start`
 
@@ -93,6 +79,41 @@ Ensures the project-local instance exists and is running, then runs the provided
 the working directory.
 
 Calling `there run` without a command is a fatal usage error.
+
+### `there status`
+
+Prints the current directory's project-local instance status without creating, starting, stopping, or otherwise mutating
+the instance.
+
+If the instance exists and is `Running`, the status is printed in green.
+
+If the instance exists and is `Stopped`, the status is printed in gray.
+
+Other Lima statuses are printed without special color.
+
+If the instance does not exist, `there status` reports it as absent.
+
+### `there doctor`
+
+Checks host prerequisites without creating, starting, stopping, or otherwise mutating instances.
+
+The check reports whether these host-side requirements are visible:
+
+- `limactl`
+- `qemu-system-x86_64`
+- `qemu-img`
+- OVMF/EDK2 x86 firmware
+
+When requirements are missing, `there doctor` returns non-zero and prints install candidates for known package families:
+
+- Debian/Ubuntu: `sudo apt install qemu-system-x86 qemu-utils ovmf`
+- Arch: `sudo pacman -S qemu-system-x86 qemu-img edk2-ovmf`
+- Fedora/RHEL-like: `sudo dnf install qemu-system-x86 qemu-img edk2-ovmf`
+- Homebrew, when available: `brew install lima`
+
+`there doctor` must not install packages.
+
+`there doctor` also runs automatically when new instance creation fails.
 
 ### `there stop`
 
@@ -128,7 +149,8 @@ instructions. The output documents:
 - image selection by command basename
 - supported commands
 - create/start/idempotence behavior
-- host firmware handling
+- status behavior
+- host prerequisite diagnostics
 - short examples
 
 Unknown commands print usage and exit with status `2`.
@@ -168,8 +190,10 @@ Tracing is enabled when the `TRACE` environment variable is non-empty.
 
 - Instance identity is a function of the physical current directory and selected image key.
 - The host project directory is always exposed to the guest as writable `/here`.
-- Lima legacy BIOS mode is opt-in by host detection, not a global default.
+- `there` does not manage Lima firmware mode such as `legacyBIOS`.
 - `auto` and `run` may create a missing instance.
 - `start` only starts or enters an existing instance.
+- `status` must not create, start, stop, or delete instances.
+- `doctor` must not create, start, stop, delete instances, or install packages.
 - `stop` and `destroy` are idempotent for missing instances from the caller's perspective.
 - `prune` is global Lima maintenance, not per-instance maintenance.

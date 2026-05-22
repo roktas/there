@@ -19,6 +19,8 @@ there run pwd
 Stop, destroy, or prune Lima state explicitly.
 
 ```bash
+there status
+there doctor
 there stop
 there destroy
 there prune
