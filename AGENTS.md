@@ -17,6 +17,10 @@ This repository develops thin helper scripts around Lima.
 - `there help` prints a compact agent-friendly command reference suitable for downstream project `AGENTS.md` files.
 - Keep code-facing text in English.
 
+## Commits
+
+- Load the `dev-commits` skill before preparing any commit message.
+
 ## Validation
 
 Run before committing changes to Bash scripts:
