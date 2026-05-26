@@ -46,13 +46,13 @@ doctor_packages() {
 	like=$(os_release_value ID_LIKE)
 
 	case " $id $like " in
-	*" debian "*|*" ubuntu "*)
+	*" debian "* | *" ubuntu "*)
 		printf '%s\n' 'sudo apt install qemu-system-x86 qemu-utils ovmf'
 		;;
 	*" arch "*)
 		printf '%s\n' 'sudo pacman -S qemu-system-x86 qemu-img edk2-ovmf'
 		;;
-	*" fedora "*|*" rhel "*)
+	*" fedora "* | *" rhel "*)
 		printf '%s\n' 'sudo dnf install qemu-system-x86 qemu-img edk2-ovmf'
 		;;
 	esac
@@ -375,35 +375,35 @@ command.stop() {
 
 usage() {
 	cat <<-EOF
-	${0##*/}: project-local Lima VM wrapper
+		${0##*/}: project-local Lima VM wrapper
 
-	Model:
-	  - Current physical directory is the project root.
-	  - Project root is mounted writable in the guest as /here.
-	  - Instance name is <image>-<dir>-<path-hash>.
-	  - Command basename selects image; "there" selects "ubuntu".
+		Model:
+		  - Current physical directory is the project root.
+		  - Project root is mounted writable in the guest as /here.
+		  - Instance name is <image>-<dir>-<path-hash>.
+		  - Command basename selects image; "there" selects "ubuntu".
 
-	Usage:
-	  ${0##*/} [auto]              ensure VM, enter shell at /here
-	  ${0##*/} start               start existing VM, enter shell
-	  ${0##*/} run CMD [ARG...]    ensure VM, run command at /here
-	  ${0##*/} status              show project VM status
-	  ${0##*/} doctor              check host prerequisites
-	  ${0##*/} stop                stop VM if running
-	  ${0##*/} destroy             delete VM if present
-	  ${0##*/} prune               run limactl prune
-	  ${0##*/} help                show this help
+		Usage:
+		  ${0##*/} [auto]              ensure VM, enter shell at /here
+		  ${0##*/} start               start existing VM, enter shell
+		  ${0##*/} run CMD [ARG...]    ensure VM, run command at /here
+		  ${0##*/} status              show project VM status
+		  ${0##*/} doctor              check host prerequisites
+		  ${0##*/} stop                stop VM if running
+		  ${0##*/} destroy             delete VM if present
+		  ${0##*/} prune               run limactl prune
+		  ${0##*/} help                show this help
 
-	Behavior:
-	  - auto and run create the VM when missing; start does not.
-	  - status reports this directory's instance without changing it.
-	  - doctor reports missing host prerequisites; it does not install them.
-	  - stop and destroy are idempotent for missing/stopped VMs.
-	  - Set LIMA_SHELLENV_ALLOW/BLOCK to opt into env propagation.
+		Behavior:
+		  - auto and run create the VM when missing; start does not.
+		  - status reports this directory's instance without changing it.
+		  - doctor reports missing host prerequisites; it does not install them.
+		  - stop and destroy are idempotent for missing/stopped VMs.
+		  - Set LIMA_SHELLENV_ALLOW/BLOCK to opt into env propagation.
 
-	Examples:
-	  ${0##*/}                     enter this project's VM
-	  ${0##*/} run pwd             prints /here
+		Examples:
+		  ${0##*/}                     enter this project's VM
+		  ${0##*/} run pwd             prints /here
 	EOF
 }
 
@@ -418,7 +418,7 @@ main() {
 	command=${1:-auto}
 
 	case $command in
-	-h|--help|help)
+	-h | --help | help)
 		command.help
 		return
 		;;
