@@ -19,8 +19,8 @@ This repository develops thin helper scripts around Lima.
 
 ## Harness
 
-- Always load the `lang-bash` skill before writing or editing any Bash code — every time, without exception.
-- Always load the `dev-commits` skill before preparing any commit message — every time, without exception.
+- Always load the `bash` skill before writing or editing any Bash code — every time, without exception.
+- Always load the `commits` skill before preparing any commit message — every time, without exception.
 
 ## Validation
 
