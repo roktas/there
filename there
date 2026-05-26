@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-set -Eeuo pipefail; shopt -s nullglob; [[ -z ${TRACE:-} ]] || set -x; unset CDPATH; IFS=$' \n'
+set -euo pipefail
+[[ -z ${TRACE:-} ]] || set -x
+unset CDPATH
 
 declare -A IMAGES=(
 	[ubuntu]=https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img
