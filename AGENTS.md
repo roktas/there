@@ -15,12 +15,6 @@ This repository develops thin helper scripts around Lima.
 
 - `there` behavior is specified in `.agents/specs/there/spec.md`.
 - `there help` prints a compact agent-friendly command reference suitable for downstream project `AGENTS.md` files.
-- Keep code-facing text in English.
-
-## Harness
-
-- Always load the `bash` skill before writing or editing any Bash code — every time, without exception.
-- Always load the `commits` skill before preparing any commit message — every time, without exception.
 
 ## Validation
 
